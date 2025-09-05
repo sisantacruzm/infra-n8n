@@ -1,0 +1,99 @@
+#version: '3.8'
+
+services:
+  # PostgreSQL con extensión pgvector para base de datos vectorial
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: n8n_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: ${TZ}
+      PGTZ: ${TZ}
+    ports:
+      - "15009:5432"
+    volumes:
+      - ${DATA_PATH}/postgres:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    networks:
+      - n8n_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # n8n - Plataforma de automatización
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n_app
+    restart: unless-stopped
+    ports:
+      - "15010:5678"
+    environment:
+      # Base de datos
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      
+      # Autenticación
+      N8N_BASIC_AUTH_ACTIVE: true
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
+      
+      # Configuración general
+      WEBHOOK_URL: http://localhost:15010
+      GENERIC_TIMEZONE: ${TZ}
+      TZ: ${TZ}
+      N8N_LOG_LEVEL: info
+      N8N_METRICS: true
+      NODE_FUNCTION_ALLOW_EXTERNAL: "*"
+      NODE_FUNCTION_ALLOW_BUILTIN: "*"
+    volumes:
+      - ${DATA_PATH}/n8n:/home/node/.n8n
+      - ${DATA_PATH}/n8n/custom-nodes:/home/node/.n8n/custom
+      - ${DATA_PATH}/n8n/workflows:/home/node/.n8n/workflows
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - n8n_network
+
+  # Redis - Cache y búsqueda vectorial
+  redis:
+    image: redis/redis-stack:latest
+    container_name: n8n_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+      - "15011:8001"
+    volumes:
+      - ${DATA_PATH}/redis:/data
+    environment:
+      TZ: ${TZ}
+    networks:
+      - n8n_network
+
+  # Adminer - Administración de PostgreSQL
+  adminer:
+    image: adminer:latest
+    container_name: n8n_adminer
+    restart: unless-stopped
+    ports:
+      - "15012:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+      TZ: ${TZ}
+    depends_on:
+      - postgres
+    networks:
+      - n8n_network
+
+networks:
+  n8n_network:
+    driver: bridge
